@@ -1,5 +1,3 @@
-require 'new_relic/agent/method_tracer'
-
 post "#{APIPREFIX}/users" do
   user = User.new(external_id: params["id"])
   user.username = params["username"]
@@ -69,10 +67,23 @@ end
 
 put "#{APIPREFIX}/users/:user_id" do |user_id|
   user = User.find_or_create_by(external_id: user_id)
-  user.update_attributes(params.slice(*%w[username default_sort_key]))
+  update_name = ''
+  if user.full_name != params['full_name']
+    update_name = params['full_name']
+  end
+  user.update_attributes(params.slice(*%w[username full_name default_sort_key]))
   if user.errors.any?
     error 400, user.errors.full_messages.to_json
   else
+    if update_name != ''
+      user_contents = Content.where(author_id: user_id)
+      user_contents.update_all({ "$set" => { author_username: update_name }})
+    end
     user.to_hash.to_json
   end
+end
+
+post "#{APIPREFIX}/users/:user_id/read" do |user_id|
+  user.mark_as_read(source)
+  user.reload.to_hash.to_json
 end

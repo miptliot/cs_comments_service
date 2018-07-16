@@ -1,4 +1,5 @@
 require 'new_relic/agent/method_tracer'
+require_relative 'constants'
 
 class User
   include Mongoid::Document
@@ -8,6 +9,7 @@ class User
   field :external_id, type: String
   field :username, type: String
   field :default_sort_key, type: String, default: "date"
+  field :full_name, type: String, default: -> { username }
 
   embeds_many :read_states
   has_many :comments, inverse_of: :author
@@ -17,6 +19,7 @@ class User
 
   validates_presence_of :external_id
   validates_presence_of :username
+  validates_presence_of :full_name
   validates_uniqueness_of :external_id
   validates_uniqueness_of :username
 
@@ -35,18 +38,20 @@ class User
   end
 
   def to_hash(params={})
-    hash = as_document.slice(*%w[username external_id])
+    hash = as_document
+      .slice(USERNAME, EXTERNAL_ID)
+
     if params[:complete]
-      hash = hash.merge("subscribed_thread_ids" => subscribed_thread_ids,
+      hash = hash.merge!("subscribed_thread_ids" => subscribed_thread_ids,
                         "subscribed_commentable_ids" => [], # not used by comment client.  To be removed once removed from comment client.
                         "subscribed_user_ids" => [], # ditto.
                         "follower_ids" => [], # ditto.
                         "id" => id,
                         "upvoted_ids" => upvoted_ids,
                         "downvoted_ids" => downvoted_ids,
-                        "default_sort_key" => default_sort_key
-                       )
+                        "default_sort_key" => default_sort_key)
     end
+
     if params[:course_id]
       self.class.trace_execution_scoped(['Custom/User.to_hash/count_comments_and_threads']) do
         if not params[:group_ids].empty?
@@ -101,18 +106,18 @@ class User
             anonymous_to_peers: false
           ).reject{ |comment| comment.standalone_context? }.count
         end
-        hash = hash.merge("threads_count" => threads_count, "comments_count" => comments_count)
+        hash = hash.merge!("threads_count" => threads_count, "comments_count" => comments_count)
       end
     end
     hash
   end
 
   def upvoted_ids
-    Content.up_voted_by(self).map(&:id)
+    Content.up_voted_by(self).pluck(:_id)
   end
 
   def downvoted_ids
-    Content.down_voted_by(self).map(&:id)
+    Content.down_voted_by(self).pluck(:_id)
   end
 
   def followers
@@ -144,6 +149,8 @@ class User
   add_method_tracer :subscribed_thread_ids
   add_method_tracer :upvoted_ids
   add_method_tracer :downvoted_ids
+  add_method_tracer :subscribe
+  add_method_tracer :mark_as_read
 
 end
 
@@ -153,8 +160,9 @@ class ReadState
   field :last_read_times, type: Hash, default: {}
   embedded_in :user
 
-  validates :course_id, uniqueness: true, presence: true
-  
+  validates_presence_of :course_id
+  validates_uniqueness_of :course_id
+
   def to_hash
     to_json
   end
